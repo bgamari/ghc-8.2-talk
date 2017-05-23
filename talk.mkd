@@ -1,0 +1,99 @@
+---
+title: GHC 8.2: Present and future
+venue: Boston Haskell
+author: Ben Gamari
+date: 24 May 2017
+---
+
+# Boston Haskell
+
+## GHC 8.2 in a nutshell
+
+ * Focus on consolidation and stabilization
+ 
+ * But still lots of excitement!
+
+## Performance
+
+ * Improvements all over the compiler
+   * More efficient handling of names
+   * Lazy deserialization of interface files
+   * Early inlining
+   * Fixed numerous bugs
+   
+## Performance by the numbers
+
+
+
+
+## `Typeable`
+
+```haskell
+-- | Runtime evidence of the identity of a type
+data TypeRep
+
+class Typeable a where
+    typeRep :: Proxy a -> TypeRep
+```
+
+## `Data.Dynamic`
+
+```haskell
+data Dynamic where
+    Dyn :: TypeRep -> a -> Dynamic
+    
+fromDyn :: forall a. Typeable a => Dynamic -> Maybe a
+fromDyn (Dyn rep x)
+  | rep == rep' = Just $ unsafeCoerce x
+  | otherwise   = Nothing
+  where rep' = typeRep (Proxy @a)
+```
+
+## New `Typeable` (or rather, `Reflection`)
+
+```haskell
+-- | Runtime evidence of the identity of a type
+data TypeRep a
+
+class Typeable a where
+    typeRep :: forall a. TypeRep a
+
+data a :~: b where
+    Refl :: (a ~ b) => a :~: b
+
+eqTypeRep :: TypeRep a -> TypeRep b -> Maybe (a :~: b)
+```
+
+## `Dynamic` with reflection
+
+```haskell
+data Dynamic where
+    Dyn :: TypeRep a -> a -> Dynamic
+    
+fromDyn :: forall a. Typeable a => Dynamic -> Maybe a
+fromDyn (Dyn rep x)
+  | Just Refl <- rep `eqTypeRep` rep' = Just x  -- yay!
+  | otherwise                         = Nothing
+  where rep' = typeRep (Proxy @a)
+```
+
+## Compact regions
+
+```
+
+```
+
+## DWARF
+
+```
+import 
+```
+
+## Deriving strategies
+
+```
+data MyType = ...
+            deriving (Eq, Show)
+```
+
+## Other great things
