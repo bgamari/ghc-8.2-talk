@@ -1,18 +1,19 @@
 ---
-title: GHC 8.2: Present and future
+title: "GHC 8.2: Present and future"
 venue: Boston Haskell
 author: Ben Gamari
 date: 24 May 2017
 ---
 
-# Boston Haskell
-
 ## GHC 8.2 in a nutshell
 
  * Focus on consolidation and stabilization
  
- * But still lots of excitement!
+ * Compiler performance
 
+ * Lots of exciting incremental improvements
+
+# Performance
 ## Performance
 
  * Improvements all over the compiler
@@ -23,13 +24,45 @@ date: 24 May 2017
    
 ## Performance by the numbers
 
+![](allocs.pdf)
 
+## Performance by the numbers
+
+```
+-------------------------------------------------
+   Program            8.0.2.log    8.2.1-rc2.log
+-------------------------------------------------
+
+Compile Allocations
+   -1 s.d.                -----           -35.7%
+   +1 s.d.                -----            -3.3%
+   Average                -----           -21.2%
+
+Compile Times
+   -1 s.d.                -----           -23.2%
+   +1 s.d.                -----            +7.1%
+   Average                -----            -9.3%
+```
+
+## Performance by the numbers
+
+Chris Allen's `bloodhound` package
+
+| compiler | user time (seconds) |
+|---------:|---------------------|
+|      7.8 |              129.12 |
+|     7.10 |              163.38 |
+|      8.0 |              147.44 |
+|      8.2 |              126.37 |
+
+
+# New Typeable
 
 
 ## `Typeable`
 
 ```haskell
--- | Runtime evidence of the identity of a type
+-- | Runtime value representing a type.
 data TypeRep
 
 class Typeable a where
@@ -44,12 +77,23 @@ data Dynamic where
     
 fromDyn :: forall a. Typeable a => Dynamic -> Maybe a
 fromDyn (Dyn rep x)
-  | rep == rep' = Just $ unsafeCoerce x
+  | rep == rep' = Just $ unsafeCoerce x   -- the horror!
   | otherwise   = Nothing
   where rep' = typeRep (Proxy @a)
 ```
 
+. . .
+
+```haskell
+appDyn :: Dynamic        -- a -> b
+       -> Dynamic        -- a
+       -> Maybe Dynamic  -- b
+appDyn (Dyn )
+```
+
 ## New `Typeable` (or rather, `Reflection`)
+
+Why not add an index to `TypeRep`\cite{typed-reflection-in-haskell}?
 
 ```haskell
 -- | Runtime evidence of the identity of a type
@@ -69,31 +113,100 @@ eqTypeRep :: TypeRep a -> TypeRep b -> Maybe (a :~: b)
 ```haskell
 data Dynamic where
     Dyn :: TypeRep a -> a -> Dynamic
-    
+```
+
+. . .
+
+```haskell
 fromDyn :: forall a. Typeable a => Dynamic -> Maybe a
 fromDyn (Dyn rep x)
   | Just Refl <- rep `eqTypeRep` rep' = Just x  -- yay!
   | otherwise                         = Nothing
-  where rep' = typeRep (Proxy @a)
+  where rep' = typeRep @a
 ```
 
-## Compact regions
+## `appDyn` with reflection
+
+```haskell
+pattern Fun :: forall fun. ()
+            => forall arg res. (fun ~ (arg -> res))
+            => TypeRep arg
+            -> TypeRep res
+            -> TypeRep fun
+
+appDyn :: Dynamic -> Dynamic -> Maybe Dynamic
+appDyn (Dyn ra xa) (Dyn rb xb)
+  | Fun argRep resRep <- ra
+  , Just Refl <- rb `eqTypeRep` argRep
+  = Just $ Dyn (xa xb)
+
+  | otherwise
+  = Nothing
+```
+
+
+## What else is new?
+
+Reflection on kinds:
+
+```haskell
+>>> typeRepKind (typeRep @Maybe)
+* -> *
+```
+
+. . .
+
+Can represent more types; lots of papercuts fixed:
+
+```haskell
+>>> typeRepKind (typeRep @GHC.Types.'I#)
+Int# -> Int
+```
+
+(Still no ability to represent higher-rank types)
+
+# Compact regions
+
+Taking control of garbage collection
+
+```haskell
 
 ```
 
+# DWARF
+
+Finally stable!
+
+(Demo)
+
+```
+import GHC.ExecutionStack
+
+
 ```
 
-## DWARF
+## What does it require?
 
-```
-import 
-```
+* Currently Linux, amd64 and (maybe i386)
+* `libdw`
+* All linked code (including core libraries) built with `-g`
+* Packaging questions
 
-## Deriving strategies
+
+# Deriving strategies
 
 ```
 data MyType = ...
             deriving (Eq, Show)
 ```
 
-## Other great things
+# Other great things
+
+ * Greatly improved levity polymorphism story
+ 
+# Other great things to come
+
+ * Loop annotations
+ *
+
+# References {.allowframebreaks}
