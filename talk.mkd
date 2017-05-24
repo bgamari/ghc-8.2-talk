@@ -1,5 +1,5 @@
 ---
-title: "GHC 8.2: Present and future"
+title: "GHC: Present and Future"
 venue: Boston Haskell
 author: Ben Gamari
 date: 24 May 2017
@@ -16,12 +16,15 @@ date: 24 May 2017
 # Performance
 ## Performance
 
- * Improvements all over the compiler
-   * More efficient handling of names
-   * Lazy deserialization of interface files
-   * Early inlining
-   * Fixed numerous bugs
+ * Improvements all over the compiler. To name just a few...
+
+    - More efficient handling of names
+    - Lazy deserialization of interface files
+    - Fix laziness of instance visibility check
+    - Early inlining
    
+ * But don't take my word for it...
+
 ## Performance by the numbers
 
 ![](allocs.pdf)
@@ -59,7 +62,7 @@ Chris Allen's `bloodhound` package
 # New Typeable
 
 
-## `Typeable`
+## `Typeable` (`@simonpj`, `@goldfire`, `@bgamari`)
 
 ```haskell
 -- | Runtime value representing a type.
@@ -68,6 +71,9 @@ data TypeRep
 class Typeable a where
     typeRep :: Proxy a -> TypeRep
 ```
+
+Introduced long ago, used by numerous consumers including `wai`, Cloud Haskell,
+`HList`, and many others.
 
 ## `Data.Dynamic`
 
@@ -85,18 +91,19 @@ fromDyn (Dyn rep x)
 . . .
 
 ```haskell
+-- Function application
 appDyn :: Dynamic        -- a -> b
        -> Dynamic        -- a
        -> Maybe Dynamic  -- b
-appDyn (Dyn )
+appDyn f x = {- more unsafe trickiness -}
 ```
 
 ## New `Typeable` (or rather, `Reflection`)
 
-Why not add an index to `TypeRep`\cite{typed-reflection-in-haskell}?
+Why not add an index to `TypeRep` [@typed-reflection-in-haskell]?
 
 ```haskell
--- | Runtime evidence of the identity of a type
+-- Runtime evidence of the identity of a type
 data TypeRep a
 
 class Typeable a where
@@ -109,6 +116,11 @@ eqTypeRep :: TypeRep a -> TypeRep b -> Maybe (a :~: b)
 ```
 
 ## `Dynamic` with reflection
+
+<div class=notes>
+Now the compiler can see that the `TypeRep` represents the type of the dynamic
+value,
+</div>
 
 ```haskell
 data Dynamic where
@@ -144,69 +156,185 @@ appDyn (Dyn ra xa) (Dyn rb xb)
   = Nothing
 ```
 
-
 ## What else is new?
 
-Reflection on kinds:
+* Reflection on kinds:
 
-```haskell
->>> typeRepKind (typeRep @Maybe)
-* -> *
-```
+    ```haskell
+    >>> typeRepKind (typeRep @Maybe)
+    * -> *
+    ```
 
 . . .
 
-Can represent more types; lots of papercuts fixed:
+* Can represent more types; lots of papercuts fixed:
 
-```haskell
->>> typeRepKind (typeRep @GHC.Types.'I#)
-Int# -> Int
-```
+    ```haskell
+    >>> typeRepKind (typeRep @GHC.Types.'I#)
+    Int# -> Int
+    ```
 
-(Still no ability to represent higher-rank types)
+    (Still no ability to represent higher-rank types)
 
-# Compact regions
+# Compact regions (`@ezyang` et al.)
+## Compact regions
 
-Taking control of garbage collection
+Collect a closed set of heap objects into a single "compact region".
 
-```haskell
+In exchange we get,
 
-```
+ * Reduced GC tracing costs in programs of the form
 
-# DWARF
+    ```haskell
+    let someLargeValue = ...
+    in someLongComputation
+    ```
 
-Finally stable!
+ * Efficient (possibly zero-copy) serialization
+ 
+At the expense of prompt GC.
+
+# Debugging and profiling (`@bgamari`, `@scpwm`)
+
+## DWARF debug information (`ghc -g`)
+
+* Introduced in 7.10
+* Improved in 8.0
+* Finally stable in 8.2
+* Future directions: <https://ghc.haskell.org/trac/ghc/wiki/DWARF/Status>
 
 (Demo)
 
-```
-import GHC.ExecutionStack
-
-
-```
+See `GHC.ExecutionStack` for stack traces from within Haskell.
 
 ## What does it require?
 
-* Currently Linux, amd64 and (maybe i386)
-* `libdw`
-* All linked code (including core libraries) built with `-g`
-* Packaging questions
+* Currently Linux, amd64 and, if you're feeling lucky, i386
+* `libdw`, GHC configured with `--enable-dwarf-unwind`
+* All linked code (including core libraries) built with `ghc -g`
+* Packaging questions remain: 
+    - Should we produce binary distributions with debug symbols? 
+    - For which distributions?
+  
+## Future: Statistical profiling?
+
+* "Cost-free" profiling: won't affect code generation
+* Sample on a wider variety of events than CC profiler:
+    - Allocations
+    - CPU cycles
+    - Architectural performance counters: Cache misses, stalls, etc.
+    - Black-hole block events
+    - Spark fizzles
+    - etc.
+* Challenges:
+    - GHC's calling convention is atypical, precluding use of the system's
+      native callgraph collection mechanism (e.g. `perf_events`)
+    - Reasoning about causality in an optimized lazy language is quite difficult, requiring more information and more sophisticated analysis tools than typically needed for more traditional languages
 
 
-# Deriving strategies
+## Future: Statistical profiling: Four roads
 
-```
+a. Build Haskell-specific tooling
+    - Pro: Easier to address Haskell-specific challenges
+    - Pro: Generally platform independent
+    - Con: Requires developing a whole tooling ecosystem
+    - Prototype: http://github.com/bgamari/tree/
+
+b. Piggyback on native tools (e.g. `perf`)
+    - Pro: Integrates with rest of system
+    - Con: Requires tricky integration
+    - Con: Difficult to reach feature-parity with Haskell-specific option
+    - Con: Necessarily platform specific
+    - Another option: Change GHC calling convention to match native
+
+c. Don't bother
+
+## Future: Stack traces on exceptions?
+
+* Tricky trade-offs need to be made
+* Stacktrace collection is expensive
+* Haskell programs sometimes use (asynchronous) exceptions for flow-control
+* Ensuring compatibility
+* See <https://ghc.haskell.org/trac/ghc/wiki/Exceptions/StackTraces>
+
+
+## Cost-center profiler modernization (`@bgamari`)
+
+* Heap profiler can now emit sample data to event log
+    - Allows correlation with other program events
+    - Live-streaming of profile data (new in 8.2, `@alexbiehl`)
+    - Compile with `ghc -eventlog -prof`
+    - Run program with `+RTS -l -h`
+* New JSON format for `.prof` files for easier integration with tooling
+    - Compile with `ghc -prof`
+    - Run program with `+RTS -pj`
+
+# Deriving strategies (`@RyanGlScott`)
+## Deriving strategies
+
+Solves the long-standing friction between `DeriveAnyClass` and `GeneralizedNewtypeDeriving`
+```haskell
 data MyType = ...
-            deriving (Eq, Show)
+            deriving (Eq, Show, Generic)
+            deriving anyclass (Binary)
 ```
 
-# Other great things
 
- * Greatly improved levity polymorphism story
+## Other great things
+
+ * More robust levity polymorphism story (`@goldfire` & `@simonpj`)
+ * `StaticPointers` support in GHCi (`@bgamari`)
+ * Unpacked sum types (`@osa1`)
+ * NUMA support in the runtime system (`@simonmar`)
+ * Join points (`@lukemaurer`)
+ * Backpack! (`@ezyang`)
+ * The long-awaited `OverloadedRecordFields` (`@adamgundry`)
+ * Interface-file determinism (`@niteria`)
+    - A boon for distributed and caching build systems
+ * Improved cross-compilation support (`@angerman` & `@bgamari`)
  
-# Other great things to come
+## Other great things
 
- * Loop annotations
- *
+ * Pretty error messages (`@Rufflewind`):
+ 
+   ![](pretty-error.png)
 
-# References {.allowframebreaks}
+<div class=notes>
+* I would like to see more in this direction.
+* We are really close and the direction is clear (#8809)
+</div>
+ 
+## Other great things to come
+
+ * Loop annotations (`@tjakway`)
+ 
+    * Teach backend to recognize loops, be more careful in register allocation and code gen.
+      <div class=notes>May fit nicely with join points work (#13567)</div>
+
+ * Better support for developer tooling
+    * Make `-fno-code` usable for `ghc-mod` and friends (`@duog`)
+    * Prettier error messages (`@adinapoli`)
+    
+ * A new Shake-based build system, Hadrian (`@snowleopard`)
+ 
+ * Linear types (Tweag I/O)
+ 
+ * Dependent Haskell (`@goldfire`)
+ 
+ * Dynamic linking on Windows (`@Phyx`)
+
+## Coming changes in GHC development
+
+ * Improved CI infrastructure (`@davean`, `@bgamari`)
+ 
+    - Faster turnaround for contributors
+    - Nightly builds
+    - Regular testing of more of GHC's surface area
+    - More efficient release process
+    - Less tree brokenness
+    
+ *     
+
+# Thank you!
+
+## References {.allowframebreaks}
