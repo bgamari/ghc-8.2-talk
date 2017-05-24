@@ -3,6 +3,7 @@ title: "GHC: Present and Future"
 venue: Boston Haskell
 author: Ben Gamari
 date: 24 May 2017
+transition: "none"
 ---
 
 ## GHC 8.2 in a nutshell
@@ -12,9 +13,11 @@ date: 24 May 2017
  * Compiler performance
 
  * Lots of exciting incremental improvements
+ 
+ * A few new features
 
-# Performance
-## Performance
+# Compiler Performance
+## Compiler Performance
 
  * Improvements all over the compiler. To name just a few...
 
@@ -25,11 +28,11 @@ date: 24 May 2017
    
  * But don't take my word for it...
 
-## Performance by the numbers
+## Compiler performance by the numbers
 
 ![](allocs.pdf)
 
-## Performance by the numbers
+## Compiler performance by the numbers
 
 ```
 -------------------------------------------------
@@ -47,16 +50,16 @@ Compile Times
    Average                -----            -9.3%
 ```
 
-## Performance by the numbers
+## Compiler performance by the numbers
 
 Chris Allen's `bloodhound` package
 
 | compiler | user time (seconds) |
 |---------:|---------------------|
-|      7.8 |              129.12 |
-|     7.10 |              163.38 |
-|      8.0 |              147.44 |
-|      8.2 |              126.37 |
+| GHC 7.8  |              129.12 |
+| GHC 7.10 |              163.38 |
+| GHC 8.0  |              147.44 |
+| GHC 8.2  |              126.37 |
 
 
 # New Typeable
@@ -65,7 +68,7 @@ Chris Allen's `bloodhound` package
 ## `Typeable` (`@simonpj`, `@goldfire`, `@bgamari`)
 
 ```haskell
--- | Runtime value representing a type.
+-- Runtime value representing a type.
 data TypeRep
 
 class Typeable a where
@@ -146,6 +149,7 @@ pattern Fun :: forall fun. ()
             -> TypeRep res
             -> TypeRep fun
 
+-- Function application
 appDyn :: Dynamic -> Dynamic -> Maybe Dynamic
 appDyn (Dyn ra xa) (Dyn rb xb)
   | Fun argRep resRep <- ra
@@ -156,20 +160,30 @@ appDyn (Dyn ra xa) (Dyn rb xb)
   = Nothing
 ```
 
-## What else is new?
+## Reflecting on `TypeRep` kinds
 
-* Reflection on kinds:
-
-    ```haskell
-    >>> typeRepKind (typeRep @Maybe)
-    * -> *
-    ```
+```haskell
+typeRepKind :: TypeRep (a :: k) -> TypeRep k
+```
 
 . . .
+
+For instance,
+```haskell
+>>> typeRepKind (typeRep @Maybe)
+* -> *
+>>> typeRepKind (typeRep @Eq)
+* -> Constraint
+```
+
+## Robustness
 
 * Can represent more types; lots of papercuts fixed:
 
     ```haskell
+    >>> :info Int
+    data Int = GHC.Types.I# GHC.Prim.Int#
+    ...
     >>> typeRepKind (typeRep @GHC.Types.'I#)
     Int# -> Int
     ```
@@ -181,7 +195,7 @@ appDyn (Dyn ra xa) (Dyn rb xb)
 
 Collect a closed set of heap objects into a single "compact region".
 
-In exchange we get,
+In exchange for prompt GC we get,
 
  * Reduced GC tracing costs in programs of the form
 
@@ -192,31 +206,88 @@ In exchange we get,
 
  * Efficient (possibly zero-copy) serialization
  
-At the expense of prompt GC.
 
 # Debugging and profiling (`@bgamari`, `@scpwm`)
 
+## Debugging today
+
+- Cost-centre profiler: Costly, changes code
+- `HasCallStack`: Costly, manual, changes code
+- Ticky-ticky profiler: Low-level, requires recompilation
+- Eventlog: Requires relinking, manual
+
 ## DWARF debug information (`ghc -g`)
 
+* e.g. `gdb` on GHC-compiled programs
+* Why DWARF?
+    - Doesn't affect code generation
+    - Requires no instrumentation
+    - Relatively cheap to produce
+    
 * Introduced in 7.10
 * Improved in 8.0
-* Finally stable in 8.2
-* Future directions: <https://ghc.haskell.org/trac/ghc/wiki/DWARF/Status>
+* Usable in 8.2
 
-(Demo)
+## Getting a stacktrace
 
-See `GHC.ExecutionStack` for stack traces from within Haskell.
+* `GHC.ExecutionStack`: stack traces from within Haskell program
+* `SIGUSR2`: Send to Haskell program, trace dumped to `stderr`
+* Native debugger: e.g. `gdb`, `lldb`
 
-## What does it require?
+## Example
 
-* Currently Linux, amd64 and, if you're feeling lucky, i386
-* `libdw`, GHC configured with `--enable-dwarf-unwind`
-* All linked code (including core libraries) built with `ghc -g`
+\tiny
+
+```
+ 0x1c1d76f    (null) (compiler/typecheck/TcInteract.hs:417.18)
+ 0x1c1d7c0    sR9L_info (compiler/typecheck/TcInteract.hs:397.24)
+ 0x1c1d7c0    sR9L_info (compiler/typecheck/TcInteract.hs:397.24)
+ 0x1c1d7c0    sR9L_info (compiler/typecheck/TcInteract.hs:397.24)
+ 0x1c1d7c0    sR9L_info (compiler/typecheck/TcInteract.hs:397.24)
+ 0x1c1d7c0    sR9L_info (compiler/typecheck/TcInteract.hs:397.24)
+ 0x1c99b90    ghc_TcSMonad_runTcS2_info (compiler/typecheck/TcSMonad.hs:2398.1)
+ 0x1a1e210    ghc_TcSimplify_tcCheckSatisfiability1_info (compiler/typecheck/TcSimplify.hs:482.1)
+ 0x19d63a0    sM9u_info (compiler/typecheck/TcRnMonad.hs:333.37)
+ 0x3568be8    stg_catch_frame_info (rts/Exception.cmm:370.1)
+ 0x19d6870    ghc_TcRnMonad_initTcWithGbl1_info (compiler/typecheck/TcRnMonad.hs:312.1)
+ 0x2572b08    rN1e_info (compiler/deSugar/Check.hs:1140.1)
+ 0x259f7f0    sPS2_info (compiler/deSugar/Check.hs:330.23)
+ 0x3568be8    stg_catch_frame_info (rts/Exception.cmm:370.1)
+ 0x25a0610    sPYq_info (compiler/deSugar/Check.hs:324.1)
+  0x8c8138    ghc_Match_zdwmatchWrapper_info (compiler/deSugar/Match.hs:743.11)
+  0x832308    sHHA_info (compiler/deSugar/DsExpr.hs:294.48)
+  0x8479f0    sIRe_info (compiler/deSugar/DsExpr.hs:271.5)
+  0x82a260    sHbC_info (compiler/deSugar/DsExpr.hs:250.5)
+  0x832c28    sHIG_info (compiler/deSugar/DsExpr.hs:352.29)
+  0x879138    sAxD_info (compiler/deSugar/DsMonad.hs:473.19)
+ 0x3568be8    stg_catch_frame_info (rts/Exception.cmm:370.1)
+  0x8795c0    ghc_DsMonad_askNoErrsDs1_info (compiler/deSugar/DsMonad.hs:469.16)
+  0x832f78    sHJl_info (compiler/deSugar/DsExpr.hs:351.5)
+  0x861ee8    sqpa_info (compiler/deSugar/DsGRHSs.hs:90.5)
+  0x863210    sqry_info (compiler/deSugar/DsGRHSs.hs:62.27)
+  0x863758    sqsu_info (compiler/deSugar/DsGRHSs.hs:62.5)
+  0x863c08    sqt3_info (compiler/deSugar/DsGRHSs.hs:49.1)
+  0x81ec80    ghc_DsBinds_zdwdsLHsBind_info (compiler/deSugar/DsBinds.hs:165.36)
+ 0x1f06290    ghc_IOEnv_zdfApplicativeIOEnv3_info (compiler/utils/IOEnv.hs:73.5)
+ ...
+```
+
+## Status for 8.2
+
+- Using it
+    * Currently Linux, amd64 and i386
+    * `libdw`, GHC configured with `--enable-dwarf-unwind`
+    * All linked code (including core libraries) built with `ghc -g`
+
+. . .
+
 * Packaging questions remain: 
+    - Debug-enabled bindists are >200MB larger
+    - More runtime library dependencies (e.g. `libdw`), more distribution dependent
     - Should we produce binary distributions with debug symbols? 
     - For which distributions?
   
-## Future: Statistical profiling?
+## The Future: Statistical profiling
 
 * "Cost-free" profiling: won't affect code generation
 * Sample on a wider variety of events than CC profiler:
@@ -226,30 +297,33 @@ See `GHC.ExecutionStack` for stack traces from within Haskell.
     - Black-hole block events
     - Spark fizzles
     - etc.
-* Challenges:
-    - GHC's calling convention is atypical, precluding use of the system's
-      native callgraph collection mechanism (e.g. `perf_events`)
-    - Reasoning about causality in an optimized lazy language is quite difficult, requiring more information and more sophisticated analysis tools than typically needed for more traditional languages
+
+## Challenges to statistical profiling
+
+- Reasoning about causality in an optimized lazy language is quite difficult,
+  requiring more metadata and more sophisticated analysis tools than
+  typically needed for more traditional languages
+
+- GHC's calling convention is atypical, precluding use of the system's
+  native callgraph collection mechanism (e.g. `perf_events`)
 
 
-## Future: Statistical profiling: Four roads
+## Statistical profiling: Two roads
 
 a. Build Haskell-specific tooling
     - Pro: Easier to address Haskell-specific challenges
     - Pro: Generally platform independent
     - Con: Requires developing a whole tooling ecosystem
-    - Prototype: http://github.com/bgamari/tree/
+    - Prototype: <http://github.com/bgamari/ghc/tree/libdw-prof>
 
 b. Piggyback on native tools (e.g. `perf`)
     - Pro: Integrates with rest of system
     - Con: Requires tricky integration
     - Con: Difficult to reach feature-parity with Haskell-specific option
-    - Con: Necessarily platform specific
+    - Con: Necessarily operating-system specific
     - Another option: Change GHC calling convention to match native
 
-c. Don't bother
-
-## Future: Stack traces on exceptions?
+## The Future: Stack traces on exceptions
 
 * Tricky trade-offs need to be made
 * Stacktrace collection is expensive
@@ -257,43 +331,108 @@ c. Don't bother
 * Ensuring compatibility
 * See <https://ghc.haskell.org/trac/ghc/wiki/Exceptions/StackTraces>
 
+## Recapping DWARF
+
+* DWARF support usable in GHC 8.2
+* Should we provide debug-enabled binary distributions?
+* Future directions: 
+    - Statistical profiling
+    - Integration with exception system
+    - Facilitate insight into Core-to-Core, STG pipelines
+    - See <https://ghc.haskell.org/trac/ghc/wiki/DWARF/Status>
+
 
 ## Cost-center profiler modernization (`@bgamari`)
 
 * Heap profiler can now emit sample data to event log
     - Allows correlation with other program events
-    - Live-streaming of profile data (new in 8.2, `@alexbiehl`)
-    - Compile with `ghc -eventlog -prof`
-    - Run program with `+RTS -l -h`
+    - Live-streaming of eventlog data (new in 8.2, `@alexbiehl`)
+    - Usage
+        - Compile with `ghc -eventlog -prof`
+        - Run program with `+RTS -l -h`
+
+. . .
+
 * New JSON format for `.prof` files for easier integration with tooling
-    - Compile with `ghc -prof`
-    - Run program with `+RTS -pj`
+    - Usage
+        - Compile with `ghc -prof`
+        - Run program with `+RTS -pj`
 
 # Deriving strategies (`@RyanGlScott`)
 ## Deriving strategies
 
-Solves the long-standing friction between `DeriveAnyClass` and `GeneralizedNewtypeDeriving`
 ```haskell
-data MyType = ...
-            deriving (Eq, Show, Generic)
-            deriving anyclass (Binary)
+data MyType = MyType {...}
+            deriving (Ord, Eq, Show)
+```
+
+## Deriving strategies (Generics)
+
+```haskell
+data MyType = MyType {...}
+            deriving (Ord, Eq, Show,
+                      Generic)
+```
+
+## Deriving strategies (Generics)
+
+```haskell
+data MyType = MyType {...}
+            deriving (Ord, Eq, Show,
+                      Generic)
+                      
+instance FromJSON MyType
+instance ToJSON MyType
+```
+
+## Deriving strategies (`DeriveAnyClass`)
+
+```haskell
+data MyType = MyType {...}
+            deriving (Ord, Eq, Show,
+                      Generic,
+                      FromJSON, ToJSON)
+```
+
+## Deriving strategies (`DeriveAnyClass` + `GNTD`)
+
+```haskell
+newtype MyType = MyType {...}
+               deriving (Ord, Eq, Show,
+                         Generic,
+                         FromJSON, ToJSON)
 ```
 
 
-## Other great things
+## Deriving strategies
+Solves the long-standing friction between `DeriveAnyClass` and `GeneralizedNewtypeDeriving`
+
+```haskell
+newtype MyType = MyType {...}
+               -- derive with "built-in" logic
+               deriving stock (Eq, Show, Generic)
+               -- derive with GeneralizedNewtypeDeriving
+               deriving newtype (Binary)
+               -- derive with DeriveAnyClass
+               deriving anyclass (FromJSON, ToJSON)
+```
+
+
+## Other great things in 8.2
 
  * More robust levity polymorphism story (`@goldfire` & `@simonpj`)
  * `StaticPointers` support in GHCi (`@bgamari`)
  * Unpacked sum types (`@osa1`)
  * NUMA support in the runtime system (`@simonmar`)
- * Join points (`@lukemaurer`)
+ * More robust join points (`@lukemaurer`)
  * Backpack! (`@ezyang`)
- * The long-awaited `OverloadedRecordFields` (`@adamgundry`)
+ * `OverloadedRecordFields` (`@adamgundry`)
  * Interface-file determinism (`@niteria`)
-    - A boon for distributed and caching build systems
  * Improved cross-compilation support (`@angerman` & `@bgamari`)
- 
-## Other great things
+ * JSON error messages (`@mpickering`)
+
+
+## Other great things in 8.2
 
  * Pretty error messages (`@Rufflewind`):
  
@@ -304,6 +443,8 @@ data MyType = ...
 * We are really close and the direction is clear (#8809)
 </div>
  
+# 8.4 and beyond
+
 ## Other great things to come
 
  * Loop annotations (`@tjakway`)
@@ -333,8 +474,11 @@ data MyType = ...
     - More efficient release process
     - Less tree brokenness
     
- *     
+## Thank you!
 
-# Thank you!
+Questions?
+
+- email: <ben@well-typed.com>
+- irc: `bgamari`
 
 ## References {.allowframebreaks}
